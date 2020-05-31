@@ -1,4 +1,4 @@
-from pytorch_transformers import *
+from transformers import *
 
 from data import *
 import gensim
@@ -43,13 +43,11 @@ with open(args.input_dir + '/Papers%s_20190919.tsv' % args.domain) as fin:
     fin.readline()
     for l in tqdm(fin, total = sum(1 for line in open(args.input_dir + '/Papers%s_20190919.tsv' % args.domain))):
         l = l[:-1].split('\t')
-        bound = min(2020 - int(l[1]), 20) * args.citation_bar
-        if cite_dict[l[0]] < bound or l[0] == '' or l[1] == '' or l[2] == '' or l[3] == '' and l[4] == '' or int(l[1]) < 1900:
+        if l[0] == '' or l[1] == '' or l[2] == '' or l[3] == '' and l[4] == '' or int(l[1]) < 1900:
             continue
         pi = {'id': l[0], 'title': l[2], 'type': 'paper', 'time': int(l[1])}
         pfl[l[0]] = pi
-        
-      
+
 if args.cuda != -1:
     device = torch.device("cuda:" + str(args.cuda))
 else:
@@ -59,7 +57,7 @@ tokenizer = XLNetTokenizer.from_pretrained('xlnet-base-cased')
 model = XLNetModel.from_pretrained('xlnet-base-cased',
                                     output_hidden_states=True,
                                     output_attentions=True).to(device)
-        
+
                
 with open(args.input_dir + '/PAb%s_20190919.tsv' % args.domain) as fin:
     fin.readline()
@@ -301,4 +299,4 @@ del graph.node_bacward
 dill.dump(graph, open(args.output_dir + '/graph%s.pk' % args.domain, 'wb'))       
         
         
-        
+
