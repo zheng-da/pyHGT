@@ -1,5 +1,7 @@
 import dgl
 import numpy as np
+from scipy import sparse as spsp
+from sklearn.metrics import f1_score
 import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
@@ -120,11 +122,12 @@ def prepare_mp(g):
     g.out_degree(0)
     g.find_edges([0])
 
-def compute_acc(pred, labels):
+def compute_f1(pred, labels):
     """
     Compute the accuracy of prediction given the labels.
     """
-    return (th.argmax(pred, dim=1) == labels).float().sum() / len(pred)
+    predict = np.where(pred.data.cpu().numpy() >= 0., 1, 0)
+    return f1_score(labels.data.cpu().numpy(), predict, average='micro')
 
 def evaluate(model, g, inputs, labels, val_mask, batch_size, device):
     """
@@ -138,9 +141,11 @@ def evaluate(model, g, inputs, labels, val_mask, batch_size, device):
     """
     model.eval()
     with th.no_grad():
-        pred = model.inference(g, inputs, batch_size, device)
-    model.train()
-    return compute_acc(pred[val_mask], labels[val_mask])
+        output = model.inference(g, inputs, batch_size, device)
+        #loss_data = loss_fcn(output[val_mask], labels[val_mask])
+        score = compute_f1(output[val_mask], labels[val_mask])
+    return score
+    #return score, loss_data.item()
 
 def load_subtensor(g, labels, seeds, input_nodes, device):
     """
@@ -174,7 +179,7 @@ def run(args, device, data):
     # Define model and optimizer
     model = SAGE(in_feats, args.num_hidden, n_classes, args.num_layers, F.relu, args.dropout)
     model = model.to(device)
-    loss_fcn = nn.CrossEntropyLoss()
+    loss_fcn = nn.BCEWithLogitsLoss()
     loss_fcn = loss_fcn.to(device)
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
@@ -206,7 +211,7 @@ def run(args, device, data):
 
             iter_tput.append(len(seeds) / (time.time() - tic_step))
             if step % args.log_every == 0:
-                acc = compute_acc(batch_pred, batch_labels)
+                acc = compute_f1(batch_pred, batch_labels)
                 gpu_mem_alloc = th.cuda.max_memory_allocated() / 1000000 if th.cuda.is_available() else 0
                 print('Epoch {:05d} | Step {:05d} | Loss {:.4f} | Train Acc {:.4f} | Speed (samples/sec) {:.4f} | GPU {:.1f} MiB'.format(
                     epoch, step, loss.item(), acc.item(), np.mean(iter_tput[3:]), gpu_mem_alloc))
@@ -227,13 +232,11 @@ def get_oag_cs():
     citation_g = g['paper', 'PP_cite', 'paper']
     citation_g.ndata['feat'] = feat
 
-    paper_field = th.zeros((citation_g.number_of_nodes(),), dtype=th.int32)
     fid, pid = g['field', 'rev_PF_in_L1', 'paper'].all_edges()
-    print('#field:', len(th.unique(fid)))
-    paper_field[pid] = fid.int()
-    uniq_fields, compressed_field = th.unique(paper_field, return_inverse=True)
-    # A small number of papers have multiple fileds. Let's just ignore them for now.
-    citation_g.ndata['field'] = compressed_field
+    _, compressed_field = th.unique(fid, return_inverse=True)
+    labels = spsp.coo_matrix((np.ones((len(fid),)), (pid.numpy(), compressed_field.numpy())), dtype=np.float32)
+    print(labels.shape)
+    citation_g.ndata['field'] = th.tensor(labels.todense())
     return citation_g
 
 if __name__ == '__main__':
@@ -274,7 +277,7 @@ if __name__ == '__main__':
     features = g.ndata['feat']
     g = dgl.graph(g.all_edges())
     print('load OAG. |V|={}, |E|={}'.format(g.number_of_nodes(), g.number_of_edges()))
-    n_classes = len(th.unique(labels))
+    n_classes = labels.shape[1]
     print('#classes:', n_classes)
     in_feats = features.shape[1]
     rand_perm = np.random.permutation(g.number_of_nodes())
