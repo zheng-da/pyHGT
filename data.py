@@ -4,6 +4,7 @@ import numpy as np
 from collections import defaultdict
 import pandas as pd
 from utils import *
+import dgl
 
 import math
 from tqdm import tqdm
@@ -43,6 +44,27 @@ class Graph():
                                             lambda: int # time
                                         )))))
         self.times = {}
+
+    def convert_to_dgl(self):
+        edges = {}
+        edata = {}
+        for k1 in self.edge_list.keys():    # target type
+            for k2 in self.edge_list[k1].keys():    # source type
+                for k3 in self.edge_list[k1][k2].keys():    # etype
+                    src, dst, eid = [], [], []
+                    for v in self.edge_list[k1][k2][k3].keys():
+                        u, t = zip(*self.edge_list[k1][k2][k3][v].items())
+                        t = [(_t or -1) for _t in t]
+                        src.extend(u)
+                        dst.extend([v] * len(u))
+                        eid.extend(t)
+                    edges[k2, k3, k1] = (src, dst)
+                    edata[k2, k3, k1] = torch.LongTensor(eid)
+        g = dgl.heterograph(edges)
+        for etype, t in edata.items():
+            g.edges[etype].data['t'] = t
+        self.graph = g
+
     def add_node(self, node):
         nfl = self.node_forward[node['type']]
         if node['id'] not in nfl:
